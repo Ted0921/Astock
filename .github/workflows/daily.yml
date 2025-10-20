@@ -1,0 +1,41 @@
+name: Daily A-share Report
+
+on:
+  schedule:
+    - cron: "40 8 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate daily report (online with offline fallback)
+        run: |
+          set -e
+          python src/run_daily.py --online || python src/run_daily.py --offline
+
+      - name: Deploy to GitHub Pages (gh-pages)
+        if: success() || failure()  # ensure run even if online step failed but offline succeeded
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./reports/daily/latest
+          publish_branch: gh-pages
+          force_orphan: true

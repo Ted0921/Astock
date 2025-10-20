@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+.cache/
+.ipynb_checkpoints/
+
+# Data & cache
+/data/
+!data/ref/
+
+# Local reports cache (keep generated reports by CI on gh-pages only)
+# You may keep reports in your branch for development; they are not required to be tracked.
+# Uncomment to ignore locally generated reports
+# /reports/
+
+# OS
+.DS_Store
+Thumbs.db
