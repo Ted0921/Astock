@@ -1,0 +1,136 @@
+name: Daily Report
+
+on:
+  schedule:
+    # 16:40 Asia/Shanghai is 08:40 UTC
+    - cron: '40 8 * * *'
+  workflow_dispatch: {}
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/daily.yml'
+      - 'README.md'
+
+permissions:
+  contents: write
+
+jobs:
+  report:
+    name: Build and Publish Daily Report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set Asia/Shanghai date
+        id: setdate
+        run: |
+          export TZ=Asia/Shanghai
+          today=$(date +%F)
+          now=$(date '+%F %T %Z')
+          echo "today=$today" >> "$GITHUB_OUTPUT"
+          echo "now=$now" >> "$GITHUB_OUTPUT"
+
+      - name: Attempt online fetch (with fallback)
+        id: online
+        shell: bash
+        run: |
+          set -u
+          mkdir -p workspace/tmp
+          if curl -sSfL "https://worldtimeapi.org/api/timezone/Asia/Shanghai" -o workspace/tmp/online.json ; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build site content
+        shell: bash
+        env:
+          TODAY: ${{ steps.setdate.outputs.today }}
+          NOW: ${{ steps.setdate.outputs.now }}
+        run: |
+          set -eu
+          # Prepare directories
+          mkdir -p site/reports/daily/${TODAY}
+
+          # Build a simple HTML report (online if available, else offline)
+          if [[ "${{ steps.online.outputs.ok }}" == "true" && -s workspace/tmp/online.json ]]; then
+            mode="online"
+            details=$(jq -r '.datetime + " | unixtime: " + (.unixtime|tostring)' workspace/tmp/online.json 2>/dev/null || true)
+            extra="<pre>$(cat workspace/tmp/online.json | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')</pre>"
+          else
+            mode="offline"
+            details="No network data available. Generated offline."
+            extra=""
+          fi
+
+          cat > site/reports/daily/${TODAY}/report.html << 'HTML'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Daily Report</title>
+            <style>
+              body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;line-height:1.6;margin:2rem;}
+              code,pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:.5rem;}
+              .meta{color:#555}
+            </style>
+          </head>
+          <body>
+            <h1>Daily Report</h1>
+            <p class="meta">Generated at: NOW_PLACEHOLDER</p>
+            <p>Mode: <strong>MODE_PLACEHOLDER</strong></p>
+            <p>Details: DETAILS_PLACEHOLDER</p>
+            EXTRA_PLACEHOLDER
+            <hr />
+            <p><a href="/">Back to latest</a></p>
+          </body>
+          </html>
+          HTML
+
+          # Inject dynamic values
+          sed -i "s/NOW_PLACEHOLDER/${NOW//\//\/}/g" site/reports/daily/${TODAY}/report.html
+          sed -i "s/MODE_PLACEHOLDER/${mode}/g" site/reports/daily/${TODAY}/report.html
+          sed -i "s/DETAILS_PLACEHOLDER/${details//\//\/}/g" site/reports/daily/${TODAY}/report.html
+          # Insert extra (escaped JSON) if present
+          if [[ -n "${extra}" ]]; then
+            # Replace placeholder with extra content
+            ex=$(printf '%s' "${extra}" | sed 's/[\&/]/\\&/g')
+            sed -i "s|EXTRA_PLACEHOLDER|${ex}|" site/reports/daily/${TODAY}/report.html
+          else
+            sed -i "s|EXTRA_PLACEHOLDER||" site/reports/daily/${TODAY}/report.html
+          fi
+
+          # Make site index redirect to latest report (today)
+          cat > site/index.html << EOF
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>Redirecting to latest daily report</title>
+          <meta http-equiv="refresh" content="0; url=reports/daily/${TODAY}/report.html">
+          <link rel="canonical" href="reports/daily/${TODAY}/report.html">
+          <body>
+            <p>Redirecting to the <a href="reports/daily/${TODAY}/report.html">latest daily report</a>...</p>
+          </body>
+          EOF
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report-${{ steps.setdate.outputs.today }}
+          path: |
+            site/reports/daily/${{ steps.setdate.outputs.today }}/report.html
+            site/index.html
+
+      - name: Publish to GitHub Pages (gh-pages branch)
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site
+          publish_branch: gh-pages
+          keep_files: true
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com
+          commit_message: "chore: publish daily report for ${{ steps.setdate.outputs.today }}"
